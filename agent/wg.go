@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !windows
+
 package agent
 
 import (
@@ -32,12 +34,12 @@ import (
 type DeviceManager struct {
 	logger *log.Logger
 	device *wg.Device
+	stopCh chan struct{}
 }
 
-func NewDeviceManager(logger *log.Logger, device *wg.Device) *DeviceManager {
-	return &DeviceManager{logger: logger, device: device}
+func NewDeviceManager(logger *log.Logger, device *wg.Device, signal chan struct{}) *DeviceManager {
+	return &DeviceManager{logger: logger, device: device, stopCh: signal}
 }
-
 func (c *DeviceManager) IpcHandle(socket net.Conn) {
 	defer socket.Close()
 
