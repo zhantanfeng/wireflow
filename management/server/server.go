@@ -97,7 +97,7 @@ func NewServer(serverConfig *ServerConfig) (*Server, error) {
 		policyController:    controller.NewPolicyController(client),
 		workspaceController: controller.NewWorkspaceController(client),
 		tokenController:     controller.NewTokenController(client),
-		monitorController:   controller.NewMonitorController(config.GlobalConfig.Monitor.Address),
+		monitorController:   controller.NewMonitorController(config.GlobalConfig.Monitor.Address, client),
 	}
 
 	// initAdmins

@@ -18,6 +18,7 @@ func (s *Server) monitorRouter() {
 	//monitorRouter.Use(dex.AuthMiddleware())
 	{
 		monitorRouter.GET("/topology", s.topology())
+		monitorRouter.GET("/ws-topology", middleware.TenantContextMiddleware(), s.workspaceTopology())
 		monitorRouter.GET("/ws-snapshot", middleware.TenantContextMiddleware(), s.workspaceSnapshot())
 
 	}
@@ -43,6 +44,20 @@ func (s *Server) workspaceSnapshot() gin.HandlerFunc {
 		ve, err := s.monitorController.GetWorkspaceAggregatedMonitor(ctx, wsId)
 		if err != nil {
 			resp.Error(c, "get topoloty falied")
+			return
+		}
+
+		resp.OK(c, ve)
+	}
+}
+
+func (s *Server) workspaceTopology() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		wsId := ctx.Value(infra.WorkspaceKey).(string)
+		ve, err := s.monitorController.GetWorkspaceTopology(ctx, wsId)
+		if err != nil {
+			resp.Error(c, "get workspace topology failed")
 			return
 		}
 

@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	v1alpha1 "wireflow/api/v1alpha1"
 	"wireflow/internal/log"
+	"wireflow/management/database"
 	"wireflow/management/models"
+	"wireflow/management/repository"
+	"wireflow/management/resource"
 	"wireflow/monitor"
 	"wireflow/pkg/utils"
 
@@ -14,10 +18,12 @@ import (
 	"github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	"golang.org/x/sync/errgroup"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type MonitorService interface {
 	GetTopologySnapshot(ctx context.Context) ([]monitor.PeerSnapshot, error)
+	GetWorkspaceTopology(ctx context.Context, wsID string) (*models.TopologyResponse, error)
 	GetNodeSnapshot(ctx context.Context, wsID string) ([]models.NodeSnapshot, error)
 	GetWorkspaceAggregatedMonitor(ctx context.Context, wsID string) (*models.AggregatedMonitorResponse, error)
 }
@@ -26,6 +32,10 @@ type monitorService struct {
 	api     v1.API
 	log     *log.Logger
 	timeout time.Duration
+
+	client        *resource.Client
+	workspaceRepo *repository.WorkspaceRepository
+	cache         *trendCache
 }
 
 // ... existing code ...
@@ -40,6 +50,7 @@ type MonitorServiceOptions struct {
 
 	// Logger 可选：不传则使用默认 logger
 	Logger *log.Logger
+	Client *resource.Client
 }
 
 func NewMonitorService(address string) (MonitorService, error) {
@@ -69,9 +80,12 @@ func NewMonitorServiceWithOptions(opts MonitorServiceOptions) (MonitorService, e
 	}
 
 	return &monitorService{
-		api:     v1.NewAPI(client),
-		log:     opts.Logger,
-		timeout: opts.Timeout,
+		api:           v1.NewAPI(client),
+		log:           opts.Logger,
+		timeout:       opts.Timeout,
+		client:        opts.Client,
+		workspaceRepo: repository.NewWorkspaceRepository(database.DB),
+		cache:         newTrendCache(),
 	}, nil
 }
 
@@ -151,6 +165,98 @@ func (v *monitorService) GetTopologySnapshot(ctx context.Context) ([]monitor.Pee
 		result = append(result, *node)
 	}
 	return result, nil
+}
+
+func (v *monitorService) GetWorkspaceTopology(ctx context.Context, wsID string) (*models.TopologyResponse, error) {
+	if v.client == nil {
+		return nil, fmt.Errorf("monitor service: k8s client is not configured")
+	}
+
+	workspace, err := v.workspaceRepo.GetByID(ctx, wsID)
+	if err != nil {
+		return nil, err
+	}
+	if workspace == nil {
+		return nil, fmt.Errorf("workspace %s not found", wsID)
+	}
+
+	var peerList v1alpha1.WireflowPeerList
+	if err := v.client.GetAPIReader().List(ctx, &peerList, client.InNamespace(workspace.Namespace)); err != nil {
+		return nil, err
+	}
+
+	resp := &models.TopologyResponse{
+		Nodes: make([]models.TopoNode, 0, len(peerList.Items)),
+		Links: make([]models.TopoLink, 0),
+	}
+
+	positions := buildNodePositions(len(peerList.Items))
+	nodesByName := make(map[string]models.TopoNode, len(peerList.Items))
+	nodesByAppID := make(map[string]models.TopoNode, len(peerList.Items))
+
+	for idx, peer := range peerList.Items {
+		node := models.TopoNode{
+			ID:     peer.Name,
+			Name:   peer.Spec.AppId,
+			IP:     derefString(peer.Status.AllocatedAddress),
+			X:      int(positions[idx][0]),
+			Y:      int(positions[idx][1]),
+			Status: toTopologyNodeStatus(peer),
+			Type:   toTopologyNodeType(peer),
+		}
+		if node.Name == "" {
+			node.Name = peer.Name
+		}
+
+		resp.Nodes = append(resp.Nodes, node)
+		nodesByName[peer.Name] = node
+		if peer.Spec.AppId != "" {
+			nodesByAppID[peer.Spec.AppId] = node
+		}
+	}
+
+	seenLinks := make(map[string]struct{})
+	for _, peer := range peerList.Items {
+		computedPeers, err := v.loadComputedPeers(ctx, workspace.Namespace, peer.Name)
+		if err != nil {
+			v.log.Warn("load computed peers failed", "peer", peer.Name, "err", err)
+		}
+
+		for _, computedPeer := range computedPeers {
+			fromNode, ok := nodesByName[peer.Name]
+			if !ok {
+				continue
+			}
+
+			toNode, ok := nodesByName[computedPeer.Name]
+			if !ok && computedPeer.AppID != "" {
+				toNode, ok = nodesByAppID[computedPeer.AppID]
+			}
+			if !ok {
+				continue
+			}
+
+			linkKey := canonicalLinkKey(fromNode.ID, toNode.ID)
+			if _, exists := seenLinks[linkKey]; exists {
+				continue
+			}
+			seenLinks[linkKey] = struct{}{}
+
+			resp.Links = append(resp.Links, models.TopoLink{
+				ID:      fmt.Sprintf("%s__%s", fromNode.ID, toNode.ID),
+				From:    fromNode.ID,
+				To:      toNode.ID,
+				Quality: toTopologyLinkQuality(fromNode, toNode),
+				Latency: syntheticLatency(fromNode, toNode),
+			})
+		}
+	}
+
+	if len(resp.Links) == 0 {
+		resp.Links = fallbackLinks(resp.Nodes)
+	}
+
+	return resp, nil
 }
 
 // QueryByTime 执行瞬时查询 (Instant Query)

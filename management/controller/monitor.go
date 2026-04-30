@@ -5,12 +5,14 @@ import (
 	"errors"
 	"wireflow/internal/log"
 	"wireflow/management/models"
+	"wireflow/management/resource"
 	"wireflow/management/service"
 	"wireflow/monitor"
 )
 
 type MonitorController interface {
 	GetTopologySnapshot(ctx context.Context) ([]monitor.PeerSnapshot, error)
+	GetWorkspaceTopology(ctx context.Context, wsID string) (*models.TopologyResponse, error)
 	GetNodeSnapshot(ctx context.Context) ([]models.NodeSnapshot, error)
 	GetWorkspaceAggregatedMonitor(ctx context.Context, wsID string) (*models.AggregatedMonitorResponse, error)
 }
@@ -37,9 +39,17 @@ func (m *monitorController) GetTopologySnapshot(ctx context.Context) ([]monitor.
 	return m.monitorService.GetTopologySnapshot(ctx)
 }
 
-func NewMonitorController(address string) MonitorController {
+func (m *monitorController) GetWorkspaceTopology(ctx context.Context, wsID string) (*models.TopologyResponse, error) {
+	return m.monitorService.GetWorkspaceTopology(ctx, wsID)
+}
+
+func NewMonitorController(address string, client *resource.Client) MonitorController {
 	logger := log.GetLogger("monitor-controller")
-	svc, err := service.NewMonitorService(address)
+	svc, err := service.NewMonitorServiceWithOptions(service.MonitorServiceOptions{
+		Address: address,
+		Client:  client,
+		Logger:  logger,
+	})
 	if err != nil {
 		logger.Error("init monitor service failed", err)
 	}
