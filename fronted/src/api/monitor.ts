@@ -8,3 +8,6 @@ import type { WorkspaceResponse } from '@/types/monitor';
  */
 export const getSnapshot = () =>
     request.get<WorkspaceResponse>("/monitor/ws-snapshot");
+
+export const getTopology = () =>
+    request.get("/monitor/ws-topology");

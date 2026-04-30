@@ -183,7 +183,7 @@ func NewServer(ctx context.Context, serverConfig *ServerConfig) (*Server, error)
 		tokenController:      controller.NewTokenController(client, st),
 		relayController:      controller.NewRelayController(client, st),
 		invitationController: controller.NewInvitationController(st),
-		monitorController:    controller.NewMonitorController(cfg.Monitor.Address, st),
+		monitorController:    controller.NewMonitorController(cfg.Monitor.Address, client, st),
 		profileController:    controller.NewProfileController(st),
 		auditController:      controller.NewAuditController(auditSvc),
 		workflowController:   controller.NewWorkflowController(workflowSvc),

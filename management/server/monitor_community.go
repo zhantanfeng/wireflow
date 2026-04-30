@@ -10,5 +10,6 @@ func (s *Server) monitorRouter() {
 	}
 	g := s.Group("/api/v1/monitor")
 	g.GET("/topology", proOnly)
+	g.GET("/ws-topology", proOnly)
 	g.GET("/ws-snapshot", proOnly)
 }
